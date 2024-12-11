@@ -1,4 +1,4 @@
-package connectorname
+package influxdb
 
 //go:generate paramgen -output=paramgen_src.go SourceConfig
 

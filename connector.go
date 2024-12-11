@@ -1,4 +1,4 @@
-package connectorname
+package influxdb
 
 import sdk "github.com/conduitio/conduit-connector-sdk"
 
