@@ -1,6 +1,6 @@
 version: "1.0"
 specification:
-  name: connectorname
+  name: influxdb
   summary: A brief description of your connector.
   description: |-
     This is a detailed description of your connector.

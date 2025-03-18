@@ -1,4 +1,4 @@
-package connectorname
+package influxdb
 
 import (
 	"context"

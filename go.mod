@@ -1,4 +1,4 @@
-module github.com/conduitio/conduit-connector-connectorname
+module github.com/devarismeroxa/conduit-connector-influxdb
 
 go 1.23.2
 

@@ -1,6 +1,6 @@
 //go:generate conn-sdk-cli specgen
 
-package connectorname
+package influxdb
 
 import (
 	_ "embed"
