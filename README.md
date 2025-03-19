@@ -1,194 +1,141 @@
-# Conduit Connector for <!-- readmegen:name -->Influxdb<!-- /readmegen:name -->
+# Conduit Connector InfluxDB
 
-[Conduit](https://conduit.io) connector for <!-- readmegen:name -->Influxdb<!-- /readmegen:name -->.
-
-<!-- readmegen:description -->
-This is a detailed description of your connector.
-
-It can contain information about the features and limitations of the connector, usage instructions, etc.
-
-By default, it's inserted into the README file and Markdown syntax can be used.<!-- /readmegen:description -->
+The InfluxDB connector is a [Conduit](https://github.com/ConduitIO/conduit) plugin that provides both source and destination connectors for [InfluxDB](https://docs.influxdata.com/influxdb3/core/).
 
 ## Source
 
-A source connector pulls data from an external resource and pushes it to
-downstream resources via Conduit.
+The InfluxDB Source connector reads data from InfluxDB using the InfluxDB API. It can be configured to read data from a specific bucket and organization, and can filter data by measurement and time range.
+
+The source connector supports reading data in batches and can be configured to read data incrementally based on a timestamp column.
 
 ### Configuration
 
-<!-- readmegen:source.parameters.yaml -->
-```yaml
-version: 2.2
-pipelines:
-  - id: example
-    status: running
-    connectors:
-      - id: example
-        plugin: "influxdb"
-        settings:
-          # GlobalConfigParam is named global_config_param_name and needs to be
-          # provided by the user.
-          # Type: string
-          # Required: yes
-          global_config_param_name: ""
-          # SourceConfigParam must be provided by the user.
-          # Type: string
-          # Required: yes
-          sourceConfigParam: ""
-          # Maximum delay before an incomplete batch is read from the source.
-          # Type: duration
-          # Required: no
-          sdk.batch.delay: "0"
-          # Maximum size of batch before it gets read from the source.
-          # Type: int
-          # Required: no
-          sdk.batch.size: "0"
-          # Specifies whether to use a schema context name. If set to false, no
-          # schema context name will be used, and schemas will be saved with the
-          # subject name specified in the connector (not safe because of name
-          # conflicts).
-          # Type: bool
-          # Required: no
-          sdk.schema.context.enabled: "true"
-          # Schema context name to be used. Used as a prefix for all schema
-          # subject names. If empty, defaults to the connector ID.
-          # Type: string
-          # Required: no
-          sdk.schema.context.name: ""
-          # Whether to extract and encode the record key with a schema.
-          # Type: bool
-          # Required: no
-          sdk.schema.extract.key.enabled: "true"
-          # The subject of the key schema. If the record metadata contains the
-          # field "opencdc.collection" it is prepended to the subject name and
-          # separated with a dot.
-          # Type: string
-          # Required: no
-          sdk.schema.extract.key.subject: "key"
-          # Whether to extract and encode the record payload with a schema.
-          # Type: bool
-          # Required: no
-          sdk.schema.extract.payload.enabled: "true"
-          # The subject of the payload schema. If the record metadata contains
-          # the field "opencdc.collection" it is prepended to the subject name
-          # and separated with a dot.
-          # Type: string
-          # Required: no
-          sdk.schema.extract.payload.subject: "payload"
-          # The type of the payload schema.
-          # Type: string
-          # Required: no
-          sdk.schema.extract.type: "avro"
+| Parameter | Description | Default | Required |
+|-----------|-------------|---------|----------|
+| `url` | The URL of the InfluxDB instance. | http://localhost:8086 | Yes |
+| `token` | The authentication token for the InfluxDB instance. | | Yes |
+| `org` | The organization name. | | Yes |
+| `bucket` | The bucket to read from. | | Yes |
+| `measurement` | The measurement to read from. Leave empty to read from all measurements. | | No |
+| `timeColumn` | The column to use for incremental reads based on time. It must be a timestamp column. | _time | Yes |
+| `startTime` | The start time for the initial data fetch. Format should be RFC3339. | | No |
+| `endTime` | The end time for the initial data fetch. Format should be RFC3339. Leave empty to use current time. | | No |
+| `batchSize` | The number of records to read in each batch. | 1000 | No |
+
+### Position
+
+The source connector tracks its position using a timestamp to enable incremental reading. The position is stored as a JSON object with the following format:
+
+```json
+{
+  "lastTimestamp": "2023-01-01T00:00:00Z"
+}
 ```
-<!-- /readmegen:source.parameters.yaml -->
+
+### Example Configuration
+
+```yaml
+connector:
+  id: influxdb-source
+  type: source
+  plugin: influxdb
+  settings:
+    url: http://localhost:8086
+    token: myToken
+    org: myOrg
+    bucket: myBucket
+    measurement: cpu
+    timeColumn: _time
+    startTime: "2023-01-01T00:00:00Z"
+    batchSize: 1000
+```
 
 ## Destination
 
-A destination connector pushes data from upstream resources to an external
-resource via Conduit.
+The InfluxDB Destination connector writes data to InfluxDB. It can be configured to write to a specific bucket and organization.
+
+The destination connector automatically maps Conduit records to InfluxDB points.
 
 ### Configuration
 
-<!-- readmegen:destination.parameters.yaml -->
+| Parameter | Description | Default | Required |
+|-----------|-------------|---------|----------|
+| `url` | The URL of the InfluxDB instance. | http://localhost:8086 | Yes |
+| `token` | The authentication token for the InfluxDB instance. | | Yes |
+| `org` | The organization name. | | Yes |
+| `bucket` | The bucket to write to. | | Yes |
+| `precision` | The precision of the timestamps. Valid values are ns, us, ms, s. | ns | No |
+| `batchSize` | The number of records to write in each batch. | 1000 | No |
+| `measurementField` | The field from the record to use as the measurement name. If not specified, the connector will use the collection name from the record metadata. | | No |
+| `measurementValue` | The static measurement name to use. This takes precedence over measurementField. | | No |
+| `tagsField` | The field from the record that contains tags. This should be a map of string to string. | | No |
+| `fieldsMapping` | How to map record fields to InfluxDB fields. Format: "recordField1:influxField1,recordField2:influxField2". | | No |
+| `timeField` | The field from the record to use as the timestamp. If not specified, the current time will be used. | _time | No |
+
+### Record Mapping
+
+Records are mapped to InfluxDB points as follows:
+
+1. **Measurement**: The measurement name is determined in the following order:
+   - If `measurementValue` is provided, it's used as the measurement name.
+   - If `measurementField` is provided, the value of that field in the record is used.
+   - Otherwise, the collection name from the record metadata is used.
+
+2. **Tags**: If `tagsField` is provided, the value of that field in the record is used as tags. It should be a map of string to string.
+
+3. **Fields**: If `fieldsMapping` is provided, the fields are mapped according to the mapping. Otherwise, all fields in the record except those used for tags, time, or measurement are used as fields.
+
+4. **Timestamp**: If `timeField` is provided, the value of that field in the record is used as the timestamp. Otherwise, the current time is used.
+
+### Example Configuration
+
 ```yaml
-version: 2.2
-pipelines:
-  - id: example
-    status: running
-    connectors:
-      - id: example
-        plugin: "influxdb"
-        settings:
-          # GlobalConfigParam is named global_config_param_name and needs to be
-          # provided by the user.
-          # Type: string
-          # Required: yes
-          global_config_param_name: ""
-          # DestinationConfigParam must be either yes or no (defaults to yes).
-          # Type: string
-          # Required: no
-          destinationConfigParam: "yes"
-          # Maximum delay before an incomplete batch is written to the
-          # destination.
-          # Type: duration
-          # Required: no
-          sdk.batch.delay: "0"
-          # Maximum size of batch before it gets written to the destination.
-          # Type: int
-          # Required: no
-          sdk.batch.size: "0"
-          # Allow bursts of at most X records (0 or less means that bursts are
-          # not limited). Only takes effect if a rate limit per second is set.
-          # Note that if `sdk.batch.size` is bigger than `sdk.rate.burst`, the
-          # effective batch size will be equal to `sdk.rate.burst`.
-          # Type: int
-          # Required: no
-          sdk.rate.burst: "0"
-          # Maximum number of records written per second (0 means no rate
-          # limit).
-          # Type: float
-          # Required: no
-          sdk.rate.perSecond: "0"
-          # The format of the output record. See the Conduit documentation for a
-          # full list of supported formats
-          # (https://conduit.io/docs/using/connectors/configuration-parameters/output-format).
-          # Type: string
-          # Required: no
-          sdk.record.format: "opencdc/json"
-          # Options to configure the chosen output record format. Options are
-          # normally key=value pairs separated with comma (e.g.
-          # opt1=val2,opt2=val2), except for the `template` record format, where
-          # options are a Go template.
-          # Type: string
-          # Required: no
-          sdk.record.format.options: ""
-          # Whether to extract and decode the record key with a schema.
-          # Type: bool
-          # Required: no
-          sdk.schema.extract.key.enabled: "true"
-          # Whether to extract and decode the record payload with a schema.
-          # Type: bool
-          # Required: no
-          sdk.schema.extract.payload.enabled: "true"
+connector:
+  id: influxdb-destination
+  type: destination
+  plugin: influxdb
+  settings:
+    url: http://localhost:8086
+    token: myToken
+    org: myOrg
+    bucket: myBucket
+    precision: ns
+    batchSize: 1000
+    measurementValue: cpu
+    tagsField: tags
+    timeField: time
 ```
-<!-- /readmegen:destination.parameters.yaml -->
+
+## Usage in InfluxDB 3.0
+
+This connector should work with both InfluxDB 2.x and 3.0. For InfluxDB 3.0, make sure to use the appropriate URL, token, organization, and bucket values according to the InfluxDB 3.0 documentation.
 
 ## Development
 
-- To install the required tools, run `make install-tools`.
-- To generate code (mocks, re-generate `connector.yaml`, update the README,
-  etc.), run `make generate`.
+### Requirements
 
-## How to build?
+- [Go](https://golang.org/) 1.21 or later
 
-Run `make build` to build the connector.
+### Building
 
-## Testing
+```shell
+go build -o conduit-connector-influxdb cmd/connector/main.go
+```
 
-Run `make test` to run all the unit tests. Run `make test-integration` to run
-the integration tests.
+### Testing
 
-The Docker compose file at `test/docker-compose.yml` can be used to run the
-required resource locally.
+To run tests, you need a running InfluxDB instance. You can use Docker to start one:
 
-## How to release?
+```shell
+docker run -p 8086:8086 -e INFLUXDB_ADMIN_USER=admin -e INFLUXDB_ADMIN_PASSWORD=password influxdb:2.7
+```
 
-The release is done in two steps:
+Then, run the tests:
 
-- Bump the version in [connector.yaml](/connector.yaml). This can be done
-  with [bump_version.sh](/scripts/bump_version.sh) script, e.g.
-  `scripts/bump_version.sh 2.3.4` (`2.3.4` is the new version and needs to be a
-  valid semantic version). This will also automatically create a PR for the
-  change.
-- Tag the connector, which will kick off a release. This can be done
-  with [tag.sh](/scripts/tag.sh).
+```shell
+go test ./...
+```
 
-## Known Issues & Limitations
+## License
 
-- Known issue A
-- Limitation A
-
-## Planned work
-
-- [ ] Item A
-- [ ] Item B
+This connector is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.

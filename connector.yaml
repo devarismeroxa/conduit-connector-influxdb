@@ -1,13 +1,19 @@
 version: "1.0"
 specification:
   name: influxdb
-  summary: A brief description of your connector.
+  summary: Conduit Connector for InfluxDB
   description: |-
-    This is a detailed description of your connector.
+    ## Source
 
-    It can contain information about the features and limitations of the connector, usage instructions, etc.
+      The InfluxDB Source connector reads data from InfluxDB using the InfluxDB API. It can be configured to read data from a specific bucket and organization, and can filter data by measurement and time range.
 
-    By default, it's inserted into the README file and Markdown syntax can be used.
+      The source connector supports reading data in batches and can be configured to read data incrementally based on a timestamp column.
+
+    ## Destination
+
+      The InfluxDB Destination connector writes data to InfluxDB. It can be configured to write to a specific bucket and organization.
+
+      The destination connector automatically maps Conduit records to InfluxDB points.
   version: v0.0.1
   author: Your Name
   source:
