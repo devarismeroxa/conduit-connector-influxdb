@@ -17,15 +17,23 @@ package influxdb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/conduitio/conduit-commons/opencdc"
-	"github.com/influxdata/influxdb-client-go/v2"
-	"github.com/influxdata/influxdb-client-go/v2/api"
-
 	sdk "github.com/conduitio/conduit-connector-sdk"
+	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
+	"github.com/influxdata/influxdb-client-go/v2/api"
+	"github.com/influxdata/influxdb-client-go/v2/api/query"
+
 	"github.com/devarismeroxa/conduit-connector-influxdb/source"
+)
+
+// Source errors definition.
+var (
+	ErrNilRecordFromInfluxDB = errors.New("received nil record from InfluxDB")
+	ErrFailedGetTimestamp    = errors.New("failed to get timestamp from record")
 )
 
 // Source is an implementation of sdk.Source that reads from InfluxDB.
@@ -58,7 +66,7 @@ func (s *Source) Config() sdk.SourceConfig {
 }
 
 // Open initializes the connector and starts a connection to InfluxDB.
-func (s *Source) Open(ctx context.Context, pos opencdc.Position) error {
+func (s *Source) Open(_ context.Context, pos opencdc.Position) error {
 	// Parse position if provided
 	if len(pos) > 0 {
 		var p position
@@ -88,56 +96,49 @@ func (s *Source) Open(ctx context.Context, pos opencdc.Position) error {
 	return nil
 }
 
-// Read reads data from InfluxDB and returns it as a record.
-func (s *Source) Read(ctx context.Context) (opencdc.Record, error) {
-	// Build Flux query
+// executeQuery runs the query against InfluxDB and returns the result.
+func (s *Source) executeQuery(ctx context.Context) (*api.QueryTableResult, error) {
 	query := s.buildQuery()
-
-	// Execute the query
 	result, err := s.queryAPI.Query(ctx, query)
 	if err != nil {
-		return opencdc.Record{}, fmt.Errorf("failed to execute query: %w", err)
+		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}
-	defer result.Close()
+	return result, nil
+}
 
-	// Process results
-	if !result.Next() {
-		// No more results
-		if result.Err() != nil {
-			return opencdc.Record{}, fmt.Errorf("error while reading query results: %w", result.Err())
+// processRow handles the result set when there are no rows or an error occurred.
+func (s *Source) processNoResults(result *api.QueryTableResult) error {
+	// Check if there was an error during query execution
+	if result.Err() != nil {
+		return fmt.Errorf("error while reading query results: %w", result.Err())
+	}
+
+	// If we're in snapshot mode, mark it as completed
+	if s.isSnapshot {
+		s.isSnapshot = false
+		// If endTime was specified, use it as the new position
+		if !s.config.ParsedEndTime.IsZero() {
+			s.position.LastTimestamp = s.config.ParsedEndTime
+		} else {
+			// Otherwise use current time
+			s.position.LastTimestamp = time.Now()
 		}
-
-		// If we're in snapshot mode, mark it as completed
-		if s.isSnapshot {
-			s.isSnapshot = false
-			// If endTime was specified, use it as the new position
-			if !s.config.ParsedEndTime.IsZero() {
-				s.position.LastTimestamp = s.config.ParsedEndTime
-			} else {
-				// Otherwise use current time
-				s.position.LastTimestamp = time.Now()
-			}
-		}
-
-		// Return error to indicate no more records
-		return opencdc.Record{}, sdk.ErrBackoffRetry
 	}
 
-	// Get record and convert to structured data
-	record := result.Record()
-	if record == nil {
-		return opencdc.Record{}, fmt.Errorf("received nil record from InfluxDB")
-	}
+	return sdk.ErrBackoffRetry
+}
 
+// buildRecord creates a Conduit record from an InfluxDB result row.
+func (s *Source) buildRecord(influxRecord *query.FluxRecord) (opencdc.Record, error) {
 	// Extract timestamp from the record
-	timestamp, ok := record.ValueByKey(s.config.TimeColumn).(time.Time)
+	timestamp, ok := influxRecord.ValueByKey(s.config.TimeColumn).(time.Time)
 	if !ok {
-		return opencdc.Record{}, fmt.Errorf("failed to get timestamp from record")
+		return opencdc.Record{}, ErrFailedGetTimestamp
 	}
 
 	// Build structured data from InfluxDB record
 	data := make(opencdc.StructuredData)
-	for k, v := range record.Values() {
+	for k, v := range influxRecord.Values() {
 		data[k] = v
 	}
 
@@ -150,40 +151,65 @@ func (s *Source) Read(ctx context.Context) (opencdc.Record, error) {
 
 	// Create metadata
 	metadata := opencdc.Metadata{
-		opencdc.MetadataCollection: record.Measurement(),
+		opencdc.MetadataCollection: influxRecord.Measurement(),
 	}
 
 	// Create key using the measurement and timestamp
 	key := opencdc.StructuredData{
-		"measurement": record.Measurement(),
+		"measurement": influxRecord.Measurement(),
 		"time":        timestamp,
 	}
 
-	// Create record with appropriate operation type
+	// Determine operation type (snapshot or create)
+	operation := opencdc.OperationCreate
 	if s.isSnapshot {
-		return sdk.Util.Source.NewRecordSnapshot(
-			posBytes,
-			metadata,
-			key,
-			data,
-		), nil
+		operation = opencdc.OperationSnapshot
 	}
-	return sdk.Util.Source.NewRecordCreate(
-		posBytes,
-		metadata,
-		key,
-		data,
-	), nil
+
+	// Create record
+	return opencdc.Record{
+		Position:  posBytes,
+		Operation: operation,
+		Metadata:  metadata,
+		Key:       key,
+		Payload: opencdc.Change{
+			After: data,
+		},
+	}, nil
+}
+
+func (s *Source) Read(ctx context.Context) (opencdc.Record, error) {
+	// Execute the query
+	result, err := s.executeQuery(ctx)
+	if err != nil {
+		return opencdc.Record{}, err
+	}
+	defer result.Close()
+
+	// Check if there are any results
+	if !result.Next() {
+		err := s.processNoResults(result)
+		return opencdc.Record{}, err
+	}
+
+	// Get record from the result
+	influxRecord := result.Record()
+	if influxRecord == nil {
+		return opencdc.Record{}, ErrNilRecordFromInfluxDB
+	}
+
+	// Build and return the record
+	return s.buildRecord(influxRecord)
 }
 
 // Ack acknowledges a record has been processed.
-func (s *Source) Ack(ctx context.Context, position opencdc.Position) error {
+func (s *Source) Ack(_ context.Context, _ opencdc.Position) error {
 	// Nothing to do here for InfluxDB source
 	return nil
 }
 
 // Teardown closes the connection to InfluxDB.
-func (s *Source) Teardown(ctx context.Context) error {
+func (s *Source) Teardown(_ context.Context) error {
 	if s.client != nil {
 		s.client.Close()
 		s.client = nil
@@ -199,21 +225,23 @@ func (s *Source) buildQuery() string {
 	query = fmt.Sprintf(`from(bucket: "%s")`, s.config.Bucket)
 
 	// Add time range
-	if !s.position.LastTimestamp.IsZero() {
+	switch {
+	case !s.position.LastTimestamp.IsZero():
 		// If we have a last timestamp, use it as the start
 		query += fmt.Sprintf(` |> range(start: %s`, s.position.LastTimestamp.Format(time.RFC3339))
-	} else if !s.config.ParsedStartTime.IsZero() {
+	case !s.config.ParsedStartTime.IsZero():
 		// Otherwise use configured start time
 		query += fmt.Sprintf(` |> range(start: %s`, s.config.ParsedStartTime.Format(time.RFC3339))
-	} else {
+	default:
 		// If no start time is configured, use all data
 		query += ` |> range(start: 0`
 	}
 
 	// Add end time if configured
-	// Add end time if configured
 	if !s.config.ParsedEndTime.IsZero() {
 		query += fmt.Sprintf(`, stop: %s)`, s.config.ParsedEndTime.Format(time.RFC3339))
+	} else {
+		query += `)`
 	}
 
 	// Filter by measurement if configured

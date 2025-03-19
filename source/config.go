@@ -25,6 +25,21 @@ import (
 	sdk "github.com/conduitio/conduit-connector-sdk"
 )
 
+// Common errors for the InfluxDB source connector
+var (
+	ErrTokenRequired         = errors.New("token is required")
+	ErrOrgRequired           = errors.New("org is required")
+	ErrBucketRequired        = errors.New("bucket is required")
+	ErrTimeColumnRequired    = errors.New("timeColumn is required")
+	ErrBatchSizeTooSmall     = errors.New("batchSize must be greater than 0")
+	ErrStartTimeAfterEndTime = errors.New("startTime must be before endTime")
+)
+
+// errFailedToParseTimestamp returns an error for timestamp parsing failures
+func errFailedToParseTimestamp(timestamp string) error {
+	return fmt.Errorf("failed to parse timestamp: %s", timestamp)
+}
+
 // Config holds the configuration for the InfluxDB source connector.
 type Config struct {
 	sdk.DefaultSourceMiddleware
@@ -61,23 +76,23 @@ func (c *Config) Validate(ctx context.Context) error {
 	}
 
 	if c.Token == "" {
-		return errors.New("token is required")
+		return ErrTokenRequired
 	}
 
 	if c.Org == "" {
-		return errors.New("org is required")
+		return ErrOrgRequired
 	}
 
 	if c.Bucket == "" {
-		return errors.New("bucket is required")
+		return ErrBucketRequired
 	}
 
 	if c.TimeColumn == "" {
-		return errors.New("timeColumn is required")
+		return ErrTimeColumnRequired
 	}
 
 	if c.BatchSize <= 0 {
-		return errors.New("batchSize must be greater than 0")
+		return ErrBatchSizeTooSmall
 	}
 
 	// Parse start time if provided
@@ -99,7 +114,7 @@ func (c *Config) Validate(ctx context.Context) error {
 	}
 
 	if !c.ParsedStartTime.IsZero() && !c.ParsedEndTime.IsZero() && c.ParsedStartTime.After(c.ParsedEndTime) {
-		return errors.New("startTime must be before endTime")
+		return ErrStartTimeAfterEndTime
 	}
 
 	err = c.DefaultSourceMiddleware.Validate(ctx)
@@ -124,5 +139,5 @@ func ParseTimestamp(timestamp string) (time.Time, error) {
 		return time.Unix(0, nanos), nil
 	}
 
-	return time.Time{}, fmt.Errorf("failed to parse timestamp: %s", timestamp)
+	return time.Time{}, errFailedToParseTimestamp(timestamp)
 }

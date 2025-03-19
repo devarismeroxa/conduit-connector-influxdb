@@ -24,6 +24,30 @@ import (
 	sdk "github.com/conduitio/conduit-connector-sdk"
 )
 
+// Error definitions.
+var (
+	ErrTokenRequired        = errors.New("token is required")
+	ErrOrgRequired          = errors.New("org is required")
+	ErrBucketRequired       = errors.New("bucket is required")
+	ErrBatchSizeTooSmall    = errors.New("batchSize must be greater than 0")
+	ErrInvalidPrecision     = errors.New("invalid precision")
+	ErrInvalidFieldsMapping = errors.New("invalid fields mapping format")
+	ErrEmptyFieldsMapping   = errors.New("empty fields mapping")
+)
+
+// Error helper functions.
+func errInvalidPrecision(precision string) error {
+	return fmt.Errorf("%w: %s", ErrInvalidPrecision, precision)
+}
+
+func errInvalidFieldsMappingFormat(mapping string) error {
+	return fmt.Errorf("%w: %s", ErrInvalidFieldsMapping, mapping)
+}
+
+func errInvalidFieldsMapping(mapping string) error {
+	return fmt.Errorf("%w: %s", ErrEmptyFieldsMapping, mapping)
+}
+
 // Config holds the configuration for the InfluxDB destination connector.
 type Config struct {
 	sdk.DefaultDestinationMiddleware
@@ -63,26 +87,26 @@ func (c *Config) Validate(ctx context.Context) error {
 	}
 
 	if c.Token == "" {
-		return errors.New("token is required")
+		return ErrTokenRequired
 	}
 
 	if c.Org == "" {
-		return errors.New("org is required")
+		return ErrOrgRequired
 	}
 
 	if c.Bucket == "" {
-		return errors.New("bucket is required")
+		return ErrBucketRequired
 	}
 
 	switch c.Precision {
 	case "ns", "us", "ms", "s":
 		// Valid precision
 	default:
-		return fmt.Errorf("invalid precision: %s, must be one of: ns, us, ms, s", c.Precision)
+		return errInvalidPrecision(c.Precision)
 	}
 
 	if c.BatchSize <= 0 {
-		return errors.New("batchSize must be greater than 0")
+		return ErrBatchSizeTooSmall
 	}
 
 	// Parse fields mapping if provided
@@ -92,12 +116,12 @@ func (c *Config) Validate(ctx context.Context) error {
 		for _, mapping := range mappings {
 			parts := strings.Split(mapping, ":")
 			if len(parts) != 2 {
-				return fmt.Errorf("invalid fields mapping format: %s, expected format 'recordField:influxField'", mapping)
+				return errInvalidFieldsMappingFormat(mapping)
 			}
 			recordField := strings.TrimSpace(parts[0])
 			influxField := strings.TrimSpace(parts[1])
 			if recordField == "" || influxField == "" {
-				return fmt.Errorf("invalid fields mapping: %s, both record field and InfluxDB field must be non-empty", mapping)
+				return errInvalidFieldsMapping(mapping)
 			}
 			c.ParsedFieldsMapping[recordField] = influxField
 		}

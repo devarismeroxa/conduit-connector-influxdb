@@ -1,10 +1,8 @@
 package influxdb
 
 // Config contains shared config parameters, common to the source and
-// destination. If you don't need shared parameters you can entirely remove this
-// file.
+// destination. If no shared parameters are needed, this can be removed.
 type Config struct {
-	// GlobalConfigParam is named global_config_param_name and needs to be
-	// provided by the user.
-	GlobalConfigParam string `json:"global_config_param_name" validate:"required"`
+	// This struct is intentionally empty as we're using specific config
+	// structs in the source and destination packages.
 }
